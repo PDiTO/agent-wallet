@@ -1,0 +1,15 @@
+# Foundry
+out/
+cache/
+broadcast/
+lcov.info
+report/
+
+# Local demo output
+deployments/
+
+# Node (agent demo)
+node_modules/
+
+.env
+.DS_Store
