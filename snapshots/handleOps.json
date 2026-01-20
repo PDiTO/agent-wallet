@@ -1,0 +1,10 @@
+{
+  "deployAndOwnerEthTransfer": "285408",
+  "ownerEthTransfer": "101584",
+  "ownerTokenTransfer": "108566",
+  "sessionBatchOfThreeTransfers": "173885",
+  "sessionEthTransfer": "140971",
+  "sessionTokenTransfer": "147486",
+  "sessionTokenTransferFirstOp": "243561",
+  "sessionTokenTransferNewWindow": "150183"
+}
