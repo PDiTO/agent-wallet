@@ -14,7 +14,7 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 # The local demo script writes deployed addresses here for the agent script to read.
-fs_permissions = [{ access = "read-write", path = "./deployments" }]
+fs_permissions = [{ access = "read-write", path = "./deployments" }, { access = "read", path = "./out" }]
 
 [profile.default.fuzz]
 runs = 256

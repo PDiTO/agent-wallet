@@ -1,0 +1,15 @@
+{
+  "name": "agent-wallet-demo",
+  "private": true,
+  "type": "module",
+  "description": "Local demo: an agent signs ERC-4337 user operations with its session key and submits them to an EntryPoint on anvil.",
+  "scripts": {
+    "demo": "node demo.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "viem": "2.43.5"
+  }
+}
