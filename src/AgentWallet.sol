@@ -546,7 +546,9 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
         bytes32 r = bytes32(sig[0:32]);
         bytes32 s = bytes32(sig[32:64]);
         uint8 v = uint8(sig[64]);
-        (signer,,) = ECDSA.tryRecover(digest, v, r, s);
+        ECDSA.RecoverError err;
+        (signer, err,) = ECDSA.tryRecover(digest, v, r, s);
+        if (err != ECDSA.RecoverError.NoError) signer = address(0);
     }
 
     /// @dev Selector of a call. Empty calldata maps to `bytes4(0)`; one to three bytes is malformed.

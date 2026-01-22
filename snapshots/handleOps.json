@@ -1,10 +1,10 @@
 {
-  "deployAndOwnerEthTransfer": "285456",
-  "ownerEthTransfer": "101632",
-  "ownerTokenTransfer": "108614",
-  "sessionBatchOfThreeTransfers": "173561",
-  "sessionEthTransfer": "140895",
-  "sessionTokenTransfer": "147410",
-  "sessionTokenTransferFirstOp": "243485",
-  "sessionTokenTransferNewWindow": "150107"
+  "deployAndOwnerEthTransfer": "273226",
+  "ownerEthTransfer": "80094",
+  "ownerTokenTransfer": "88868",
+  "sessionBatchOfThreeTransfers": "133095",
+  "sessionEthTransfer": "110057",
+  "sessionTokenTransfer": "110264",
+  "sessionTokenTransferFirstOp": "225351",
+  "sessionTokenTransferNewWindow": "110161"
 }
