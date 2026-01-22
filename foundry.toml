@@ -40,11 +40,11 @@ fail_on_revert = true
 
 # Heavier settings used in CI.
 [profile.ci.fuzz]
-runs = 5000
+runs = 10000
 
 [profile.ci.invariant]
-runs = 256
-depth = 100
+runs = 512
+depth = 128
 fail_on_revert = true
 
 [fmt]

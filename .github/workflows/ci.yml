@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  forge:
+    name: fmt, build, test
+    runs-on: ubuntu-latest
+    env:
+      # 10,000 fuzz runs per property, 512 invariant runs at depth 128. See foundry.toml.
+      FOUNDRY_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.4.3
+
+      - name: Check formatting
+        run: forge fmt --check
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Test
+        run: forge test -vvv
+
+  demo:
+    name: anvil demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.4.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run the agent against a local EntryPoint
+        run: ./scripts/demo.sh
