@@ -38,6 +38,8 @@ contract AgentWalletFactory {
 
         account = AgentWallet(payable(Clones.cloneDeterministic(address(ACCOUNT_IMPLEMENTATION), fullSalt)));
         account.initialize(owner, guardian);
+        // The only external call is to the clone deployed on the line above, running our own code.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit AccountCreated(address(account), owner, guardian, salt);
     }
 

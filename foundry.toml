@@ -16,6 +16,20 @@ remappings = [
 # The local demo script writes deployed addresses here for the agent script to read.
 fs_permissions = [{ access = "read-write", path = "./deployments" }, { access = "read", path = "./out" }]
 
+[lint]
+# Lint the contracts only. Tests and scripts favour readability over gas and style rules.
+ignore = ["test/**/*.sol", "script/**/*.sol"]
+exclude_lints = [
+    # Batches are all-or-nothing on purpose: one bad call must revert the whole operation.
+    "require-revert-in-loop",
+    # Validity windows and spend periods are the feature. Seconds of validator drift do not matter.
+    "block-timestamp",
+    # A few small memory-safe blocks, each commented where it is used.
+    "inline-assembly",
+    # keccak256(abi.encode(...)) is clearer than assembly in the factory's salt helper.
+    "asm-keccak256",
+]
+
 [profile.default.fuzz]
 runs = 256
 

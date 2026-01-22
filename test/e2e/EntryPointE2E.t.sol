@@ -91,7 +91,7 @@ contract EntryPointE2ETest is AgentWalletTestBase {
 
         assertTrue(r.found && r.success);
         assertEq(token.balanceOf(recipient), 10e18);
-        assertEq(sessionNonce(agent) & type(uint64).max, 1, "session lane advanced");
+        assertEq(account.getSessionNonce(agent), (uint256(uint160(agent)) << 64) | 1, "session lane advanced");
         assertEq(entryPoint.getNonce(address(account), 0), ownerNonce, "owner lane untouched");
         assertEq(account.getSession(agent).callsUsed, 1);
     }

@@ -60,6 +60,11 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     bytes4 internal constant APPROVE_SELECTOR = 0x095ea7b3;
     /// @dev Length of ABI encoded `transfer` / `approve` calldata: selector + two words.
     uint256 internal constant TOKEN_CALL_LENGTH = 68;
+    /// @dev Mode byte + 65-byte ECDSA signature.
+    uint256 internal constant OWNER_SIGNATURE_LENGTH = 66;
+    /// @dev Mode byte + 20-byte session key + 65-byte ECDSA signature.
+    uint256 internal constant SESSION_SIGNATURE_LENGTH = 86;
+    uint256 internal constant SELECTOR_LENGTH = 4;
 
     uint256 internal constant SIG_VALIDATION_SUCCESS = 0;
     uint256 internal constant SIG_VALIDATION_FAILED = 1;
@@ -90,7 +95,7 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     //////////////////////////////////////////////////////////////*/
 
     modifier onlyEntryPoint() {
-        if (msg.sender != address(ENTRY_POINT)) revert NotEntryPoint();
+        _requireFromEntryPoint();
         _;
     }
 
@@ -98,10 +103,18 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     /// session operations are forced through `executeUserOp` in validation. Self-calls come from `execute*`,
     /// which are themselves owner-only, and session policies cannot target the account.
     modifier onlyOwnerOrEntryPoint() {
+        _requireOwnerOrEntryPoint();
+        _;
+    }
+
+    function _requireFromEntryPoint() internal view {
+        if (msg.sender != address(ENTRY_POINT)) revert NotEntryPoint();
+    }
+
+    function _requireOwnerOrEntryPoint() internal view {
         if (msg.sender != owner && msg.sender != address(ENTRY_POINT) && msg.sender != address(this)) {
             revert NotAuthorized();
         }
-        _;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -117,10 +130,13 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     /// @notice Set the owner and optional guardian. Called once by the factory in the deploying transaction.
     /// @param owner_ ECDSA owner, must be non-zero.
     /// @param guardian_ Address allowed to pause sessions, or zero for none.
+    // forge-lint: disable-next-line(missing-zero-check)
     function initialize(address owner_, address guardian_) external initializer {
         if (owner_ == address(0)) revert InvalidOwner();
         owner = owner_;
         guardian = guardian_;
+        // No external call happens here; the lint appears to count the `initializer` modifier as one.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit AccountInitialized(address(ENTRY_POINT), owner_, guardian_);
     }
 
@@ -152,12 +168,12 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
         uint8 mode = uint8(sig[0]);
 
         if (mode == MODE_OWNER) {
-            if (sig.length != 66) return SIG_VALIDATION_FAILED;
+            if (sig.length != OWNER_SIGNATURE_LENGTH) return SIG_VALIDATION_FAILED;
             return _recover(digest, sig[1:]) == owner ? SIG_VALIDATION_SUCCESS : SIG_VALIDATION_FAILED;
         }
 
         if (mode == MODE_SESSION) {
-            if (sig.length != 86) return SIG_VALIDATION_FAILED;
+            if (sig.length != SESSION_SIGNATURE_LENGTH) return SIG_VALIDATION_FAILED;
             address key = address(bytes20(sig[1:21]));
             Session storage session = _sessions[key];
             // Unknown and revoked keys are not signers for this account.
@@ -185,20 +201,21 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
         if (nonceKey != uint256(uint160(key))) revert InvalidSessionNonceKey(key, nonceKey);
 
         bytes calldata callData = userOp.callData;
-        bytes4 outer = callData.length >= 4 ? bytes4(callData[:4]) : bytes4(0);
+        bytes4 outer = callData.length >= SELECTOR_LENGTH ? bytes4(callData[:SELECTOR_LENGTH]) : bytes4(0);
         if (outer != IAccountExecute.executeUserOp.selector) revert SessionCallDataNotAllowed(outer);
 
-        Call[] memory calls = abi.decode(callData[4:], (Call[]));
+        Call[] memory calls = abi.decode(callData[SELECTOR_LENGTH:], (Call[]));
         uint256 n = calls.length;
         if (n == 0) revert EmptyBatch();
 
         uint256 used = uint256(session.callsUsed) + n;
         if (used > session.maxCalls) revert SessionCallLimitExceeded(key, used, session.maxCalls);
         // Counted at validation, so calls that later revert in execution still use up the allowance.
+        // forge-lint: disable-next-line(unsafe-typecast) -- used <= maxCalls, a uint32
         session.callsUsed = uint32(used);
 
         uint128 maxValue = session.maxValuePerCall;
-        for (uint256 i; i < n; ++i) {
+        for (uint256 i = 0; i < n; ++i) {
             _checkCall(key, maxValue, calls[i]);
         }
 
@@ -209,6 +226,7 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
             uint256 spent = session.gasSpent;
             uint256 budget = session.gasBudget;
             if (maxCost > budget - spent) revert SessionGasBudgetExceeded(key, maxCost, budget - spent);
+            // forge-lint: disable-next-line(unsafe-typecast) -- spent + maxCost <= gasBudget, a uint128
             session.gasSpent = uint128(spent + maxCost);
         }
     }
@@ -232,8 +250,12 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
 
     /// @dev Worst-case prefund the EntryPoint computes for an operation without a paymaster.
     function _maxGasCost(PackedUserOperation calldata userOp) internal pure returns (uint256) {
+        // Each bytes32 holds two uint128 fields; these casts pick one half on purpose.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 verificationGasLimit = uint128(bytes16(userOp.accountGasLimits));
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 callGasLimit = uint128(uint256(userOp.accountGasLimits));
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 maxFeePerGas = uint128(uint256(userOp.gasFees));
         // Each term is at most 2^128, so this cannot overflow unless preVerificationGas is absurd, and then
         // checked arithmetic reverts.
@@ -243,7 +265,8 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     function _payPrefund(uint256 missingAccountFunds) internal {
         if (missingAccountFunds != 0) {
             // Explicit gas avoids the GAS opcode, which ERC-7562 bans in validation. The EntryPoint verifies
-            // the deposit itself, so the result is deliberately ignored.
+            // the deposit itself, so the result is deliberately ignored. msg.sender is the EntryPoint.
+            // forge-lint: disable-next-line(arbitrary-send-eth, low-level-calls, return-bomb)
             (bool success,) = payable(msg.sender).call{value: missingAccountFunds, gas: type(uint256).max}("");
             (success);
         }
@@ -257,15 +280,17 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     /// @dev Only reached for operations that passed `validateUserOp` on this account, so the signature
     /// bytes are authenticated: the mode byte and session key read here are the ones that were verified.
     function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external onlyEntryPoint {
-        Call[] memory calls = abi.decode(userOp.callData[4:], (Call[]));
+        Call[] memory calls = abi.decode(userOp.callData[SELECTOR_LENGTH:], (Call[]));
 
         if (uint8(userOp.signature[0]) == MODE_SESSION) {
             address key = address(bytes20(userOp.signature[1:21]));
             _enforceSessionExecution(key, calls);
+            // Emitted before any call is made; the lint does not see the ordering.
+            // forge-lint: disable-next-line(reentrancy-events)
             emit SessionExecuted(key, userOpHash, calls.length);
         }
 
-        for (uint256 i; i < calls.length; ++i) {
+        for (uint256 i = 0; i < calls.length; ++i) {
             _call(calls[i].target, calls[i].value, calls[i].data);
         }
     }
@@ -277,7 +302,7 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
 
     /// @notice Make several calls atomically. Owner or EntryPoint (owner-signed operation) only.
     function executeBatch(Call[] calldata calls) external onlyOwnerOrEntryPoint {
-        for (uint256 i; i < calls.length; ++i) {
+        for (uint256 i = 0; i < calls.length; ++i) {
             _call(calls[i].target, calls[i].value, calls[i].data);
         }
     }
@@ -290,7 +315,7 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
         if (sessionsPaused) revert SessionsArePaused();
 
         uint128 maxValue = session.maxValuePerCall;
-        for (uint256 i; i < calls.length; ++i) {
+        for (uint256 i = 0; i < calls.length; ++i) {
             Call memory c = calls[i];
             bytes4 selector = _checkCall(key, maxValue, c);
             if (c.value != 0) _chargeSpend(key, NATIVE, c.value);
@@ -300,10 +325,10 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
         }
     }
 
-    /// @dev Charge `amount` of `token` against the session's limit for the current window.
+    /// @dev Charge `amount` of `token` against the session's limit for the current window. `_checkCall` has
+    /// already ensured a limit exists; an unconfigured asset would read as a limit of zero here anyway.
     function _chargeSpend(address key, address token, uint256 amount) internal {
         SpendState storage state = _spend[key][token];
-        if (!state.enabled) revert NoSpendLimit(key, token);
 
         uint64 window = _windowOf(state.period);
         uint256 spent = state.window == window ? state.spent : 0;
@@ -312,15 +337,22 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
 
         spent += amount;
         state.window = window;
+        // forge-lint: disable-next-line(unsafe-typecast) -- spent <= limit, a uint128
         state.spent = uint128(spent);
+        // Runs during the policy pass, before any of the op's calls; the lint does not see the ordering.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit SessionSpent(key, token, amount, spent, window);
     }
 
+    /// @dev Arbitrary calls are the point of an account; every path into this is owner-only or policy-checked.
     function _call(address target, uint256 value, bytes memory data) internal {
+        // forge-lint: disable-next-line(arbitrary-send-eth, low-level-calls, calls-loop)
         (bool success, bytes memory result) = target.call{value: value}(data);
         if (!success) {
             assembly ("memory-safe") {
-                revert(add(result, 0x20), mload(result))
+                // Bubble up the callee's revert data unchanged (skip the 32-byte length prefix).
+                // forge-lint: disable-next-line(literal-instead-of-constant)
+                revert(add(result, 32), mload(result))
             }
         }
     }
@@ -354,28 +386,37 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
         );
 
         // Limits first so permission checks can see which targets are metered tokens.
-        for (uint256 i; i < params.spendLimits.length; ++i) {
-            SpendLimit calldata sl = params.spendLimits[i];
+        _addSpendLimits(key, params.spendLimits);
+        _addPermissions(key, params.permissions);
+    }
+
+    function _addSpendLimits(address key, SpendLimit[] calldata limits) internal {
+        for (uint256 i = 0; i < limits.length; ++i) {
+            SpendLimit calldata sl = limits[i];
             if (sl.token == address(this) || sl.token == address(ENTRY_POINT)) revert InvalidSpendLimitToken(sl.token);
             SpendState storage state = _spend[key][sl.token];
             if (state.enabled) revert DuplicateSpendLimit(sl.token);
+            // forge-lint: disable-next-line(costly-loop) -- one-time policy setup
             state.enabled = true;
             state.limit = sl.limit;
             state.period = sl.period;
             emit SessionSpendLimitAdded(key, sl.token, sl.limit, sl.period);
         }
+    }
 
-        for (uint256 i; i < params.permissions.length; ++i) {
-            Permission calldata p = params.permissions[i];
+    function _addPermissions(address key, Permission[] calldata permissions) internal {
+        for (uint256 i = 0; i < permissions.length; ++i) {
+            Permission calldata p = permissions[i];
             if (p.target == address(0) || p.target == address(this) || p.target == address(ENTRY_POINT)) {
                 revert InvalidPermissionTarget(p.target);
             }
             bool metered = _spend[key][p.target].enabled;
-            for (uint256 j; j < p.selectors.length; ++j) {
+            for (uint256 j = 0; j < p.selectors.length; ++j) {
                 bytes4 selector = p.selectors[j];
                 bool tokenMove = selector == TRANSFER_SELECTOR || selector == APPROVE_SELECTOR;
                 if (tokenMove && !metered) revert UnlimitedTokenPermission(p.target, selector);
                 if (!tokenMove && metered) revert SelectorNotAllowedOnLimitedToken(p.target, selector);
+                // forge-lint: disable-next-line(costly-loop) -- one-time policy setup
                 _allowed[key][p.target][selector] = true;
                 emit SessionPermissionAdded(key, p.target, selector);
             }
@@ -412,14 +453,18 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     /// @notice Hand the account to a new ECDSA owner. Session keys are left as they are.
     function transferOwnership(address newOwner) external onlyOwnerOrEntryPoint {
         if (newOwner == address(0) || _sessions[newOwner].status != SessionStatus.None) revert InvalidOwner();
-        emit OwnerTransferred(owner, newOwner);
+        address previous = owner;
         owner = newOwner;
+        emit OwnerTransferred(previous, newOwner);
     }
 
     /// @notice Set or clear the guardian.
+    /// @dev Zero is allowed and means no guardian.
+    // forge-lint: disable-next-line(missing-zero-check)
     function setGuardian(address newGuardian) external onlyOwnerOrEntryPoint {
-        emit GuardianSet(guardian, newGuardian);
+        address previous = guardian;
         guardian = newGuardian;
+        emit GuardianSet(previous, newGuardian);
     }
 
     /// @notice Add to this account's EntryPoint deposit.
@@ -507,22 +552,25 @@ contract AgentWallet is IAccount, IAccountExecute, IAgentWallet, IERC1271, EIP71
     /// @dev Selector of a call. Empty calldata maps to `bytes4(0)`; one to three bytes is malformed.
     function _selectorOf(address target, bytes memory data) internal pure returns (bytes4 selector) {
         if (data.length == 0) return bytes4(0);
-        if (data.length < 4) revert MalformedCallData(target);
+        if (data.length < SELECTOR_LENGTH) revert MalformedCallData(target);
         assembly ("memory-safe") {
-            selector := mload(add(data, 0x20))
+            // First word after the 32-byte length prefix; bytes4 keeps the high four bytes.
+            // forge-lint: disable-next-line(literal-instead-of-constant)
+            selector := mload(add(data, 32))
         }
     }
 
     /// @dev Amount argument of a canonically encoded `transfer(address,uint256)` or `approve(address,uint256)`.
     function _tokenAmount(bytes memory data) internal pure returns (uint256 amount) {
         assembly ("memory-safe") {
-            // 0x20 length prefix + 4 selector bytes + 32 bytes for the address argument.
+            // 32-byte length prefix + 4 selector bytes + 32 bytes for the address argument.
             amount := mload(add(data, 68))
         }
     }
 
     /// @dev Index of the current spend window. Period zero is a single window for the life of the key.
     function _windowOf(uint48 period) internal view returns (uint64) {
+        // forge-lint: disable-next-line(unsafe-typecast) -- timestamp / period fits in 64 bits for any real clock
         return period == 0 ? 0 : uint64(block.timestamp / period);
     }
 
