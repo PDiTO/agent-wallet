@@ -1,4 +1,6 @@
-<!-- logo -->
+<p align="center">
+  <img src="docs/logo.png" alt="agent-wallet logo" width="200">
+</p>
 
 # agent-wallet
 
