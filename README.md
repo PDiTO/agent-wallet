@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="agent-wallet logo" width="200">
+  <img src="docs/logo.png" alt="agent-wallet logo" width="220">
 </p>
 
 # agent-wallet
